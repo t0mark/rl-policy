@@ -8,8 +8,11 @@ Changes from before/wfc/wfc.py:
        because they avoid the Python-level deep-copy machinery.
      - history list replaced with collections.deque(maxlen=...) to bound
        memory growth automatically and make the intent explicit.
-     - connections values stored as frozenset for O(1) membership test instead
-       of tuple (O(n) linear scan).  Used in _update_validity via set difference.
+     - connections values stored as frozenset to enable O(n) set-difference
+       via Python's frozenset.__sub__, replacing np.setdiff1d which sorts both
+       arrays (O(n log n)) and allocates np.arange(n_tiles) on every call.
+       The dominant operation in _update_validity is set difference, not
+       membership test.
 
   B. Generator / lazy evaluation
      - WFCCore.solve() now yields the wave array after each collapse step
@@ -136,9 +139,11 @@ class WFCCore:
         self.shape = config.shape
         self.dimensions = config.dimensions
 
-        # A: convert connection tuples → frozenset for O(1) membership test.
-        # np.setdiff1d already handles tuple input, but storing as frozenset
-        # documents intent and enables set-arithmetic in _update_validity.
+        # A: convert connection tuples → frozenset.
+        # _update_validity computes the set difference (all_tiles - valid_set)
+        # per neighbour.  frozenset.__sub__ runs in O(n_tiles) whereas
+        # np.setdiff1d sorts both arrays — O(n_tiles log n_tiles) — and
+        # allocates np.arange(n_tiles) on every call.
         self.connections: Dict[int, Dict[tuple, frozenset]] = {
             tile: {d: frozenset(neighbors) for d, neighbors in dirs.items()}
             for tile, dirs in config.connections.items()
@@ -194,7 +199,7 @@ class WFCCore:
         possible_tiles = self._get_possible_tiles(tile_id, directions)
         all_tiles = frozenset(range(self.n_tiles))
         for neighbor, valid_set in zip(neighbours, possible_tiles):
-            # A: set difference on frozenset is O(len(valid_set)) — semantically clear.
+            # A: frozenset.__sub__ is O(n_tiles); np.setdiff1d was O(n_tiles log n_tiles).
             invalid = np.fromiter(all_tiles - valid_set, dtype=np.intp)
             if invalid.size:
                 self.grid.valid[(invalid,) + tuple(neighbor)] = False
