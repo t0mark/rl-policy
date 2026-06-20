@@ -1,42 +1,10 @@
-# PGTT — Python Optimization Assignment
+# PGTT
 
-Wave Function Collapse (WFC) 기반 지형 생성 코드를 대상으로 Python 자료구조,
-제너레이터, 클래스 설계, 데코레이터 기법을 적용해 성능과 구조를 개선한 과제입니다.
+**Procedural Ground and Terrain Toolbox** — WFC(Wave Function Collapse) 알고리즘으로 지형을 절차적으로 생성하고, 생성된 지형 위에서 사족 보행 로봇(Go2-inspired)을 MuJoCo로 시뮬레이션하는 툴킷입니다.
 
-## 폴더 구조
-
-```
-pgtt/
-├── docker/
-│   ├── Dockerfile
-│   └── docker-compose.yml
-├── src/
-│   ├── before/                  # 최적화 전 원본 코드
-│   │   ├── wfc/wfc.py
-│   │   └── terrain/generator.py
-│   └── after/                   # 최적화 후 코드
-│       ├── wfc/wfc.py
-│       ├── terrain/generator.py
-│       └── utils/decorators.py
-├── benchmark/
-│   ├── fixtures/minimal_scene.xml
-│   └── run_benchmark.py
-├── results/
-│   └── benchmark_results.csv    # 실행 후 자동 생성
-├── README.md
-└── requirements.txt
-```
-
-## 적용한 최적화
-
-| 항목 | 대상 | 내용 |
-|------|------|------|
-| A. 자료구조 | `after/wfc/wfc.py` | `copy.deepcopy` → `np.copyto` / `.copy()` (10-50× 빠름), `list` history → `deque(maxlen=...)`, connections `tuple` → `frozenset` |
-| B. Generator | `after/wfc/wfc.py` | `solve()` 를 generator로 변환 — 중간 상태 lazy yield, `run()` 으로 최종 결과 반환 |
-| C. 클래스/SRP | `after/wfc/wfc.py` | `WFCCore` → `WFCConfig` (frozen dataclass) + `WFCGrid` (상태) + `WFCCore` (알고리즘) 분리 |
-| C. 클래스/SRP | `after/terrain/generator.py` | `TerrainConfig` (frozen dataclass), `BoxData` (dataclass), `RoughGroundBuilder` (벡터화 생성 전략), `TerrainGenerator` (조립만 담당) |
-| A. 벡터화 | `after/terrain/generator.py` | `AddRoughGround` 내 N×N 중첩 루프의 개별 random 호출 → 3개 배치 호출 + `np.cumsum` |
-| D. 데코레이터 | `after/utils/decorators.py` | `@timing`, `@log_call`, `@validate_grid` — `functools.wraps` 사용 |
+- **WFC 지형 생성**: 타일 간 인접 제약을 전파해 계단, 평지, 경사 등 다양한 지형을 자동 배치
+- **Rough Ground 생성**: N×N 박스를 무작위 크기·위치·회전으로 배치해 울퉁불퉁한 지면 생성
+- **사족 보행 시뮬레이션**: 트롯 보행 CPG + PD 제어로 로봇이 생성된 지형을 주행
 
 ## 로컬 실행
 
