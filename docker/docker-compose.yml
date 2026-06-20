@@ -1,0 +1,62 @@
+services:
+  before:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    volumes:
+      - ../results:/app/results
+    environment:
+      - PYTHONPATH=/app
+    command: python benchmark/run_benchmark.py --mode before
+
+  after:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    volumes:
+      - ../results:/app/results
+    environment:
+      - PYTHONPATH=/app
+    command: python benchmark/run_benchmark.py --mode after
+
+  compare:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    volumes:
+      - ../results:/app/results
+    environment:
+      - PYTHONPATH=/app
+    command: python benchmark/run_benchmark.py --mode compare
+
+  plots:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    volumes:
+      - ../results:/app/results
+    environment:
+      - PYTHONPATH=/app
+    command: python benchmark/generate_plots.py
+
+  render:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    volumes:
+      - ../results:/app/results
+    environment:
+      - PYTHONPATH=/app
+      - MUJOCO_GL=osmesa
+    command: python benchmark/render_terrain.py
+
+  simulate:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    volumes:
+      - ../results:/app/results
+    environment:
+      - PYTHONPATH=/app
+      - MUJOCO_GL=osmesa
+    command: python benchmark/simulate_robot.py

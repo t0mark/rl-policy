@@ -1,0 +1,380 @@
+import xml.etree.ElementTree as xml_et
+import numpy as np
+import cv2
+import noise
+import sys, os
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+import argparse as _argparse
+
+# NOTE: jax is not available in this benchmark environment.
+try:
+    import jax.numpy as jnp
+    _JAX_AVAILABLE = True
+except ImportError:
+    jnp = None
+    _JAX_AVAILABLE = False
+
+def _get_robot_paths(robot_name="go2"):
+    return {
+        "input": f"./{robot_name}/xmls/scene_mjx_feetonly.xml",
+        "output": f"./{robot_name}/xmls/terrain_scene_mjx.xml",
+        "test": f"./{robot_name}/xmls/terrain_test_mjx.xml",
+        "data": f"./{robot_name}/xmls/data.xml",
+        "huge_stairs": f"./{robot_name}/xmls/huge_stairs.xml",
+    }
+
+# Default (overridden by --robot flag in __main__)
+ROBOT = "go2"
+_paths = _get_robot_paths(ROBOT)
+INPUT_SCENE_PATH = _paths["input"]
+OUTPUT_SCENE_PATH = _paths["output"]
+TEST_SCENE_PATH = _paths["test"]
+DATA_SCENE_PATH = _paths["data"]
+HUGE_STAIRS = _paths["huge_stairs"]
+
+# zyx euler angle to quaternion
+def euler_to_quat(roll, pitch, yaw):
+    cx = np.cos(roll / 2)
+    sx = np.sin(roll / 2)
+    cy = np.cos(pitch / 2)
+    sy = np.sin(pitch / 2)
+    cz = np.cos(yaw / 2)
+    sz = np.sin(yaw / 2)
+
+    return np.array(
+        [
+            cx * cy * cz + sx * sy * sz,
+            sx * cy * cz - cx * sy * sz,
+            cx * sy * cz + sx * cy * sz,
+            cx * cy * sz - sx * sy * cz,
+        ],
+        dtype=np.float64,
+    )
+
+
+# zyx euler angle to rotation matrix
+def euler_to_rot(roll, pitch, yaw):
+    rot_x = np.array(
+        [
+            [1, 0, 0],
+            [0, np.cos(roll), -np.sin(roll)],
+            [0, np.sin(roll), np.cos(roll)],
+        ],
+        dtype=np.float64,
+    )
+
+    rot_y = np.array(
+        [
+            [np.cos(pitch), 0, np.sin(pitch)],
+            [0, 1, 0],
+            [-np.sin(pitch), 0, np.cos(pitch)],
+        ],
+        dtype=np.float64,
+    )
+    rot_z = np.array(
+        [
+            [np.cos(yaw), -np.sin(yaw), 0],
+            [np.sin(yaw), np.cos(yaw), 0],
+            [0, 0, 1],
+        ],
+        dtype=np.float64,
+    )
+    return rot_z @ rot_y @ rot_x
+
+
+# 2d rotate
+def rot2d(x, y, yaw):
+    nx = x * np.cos(yaw) - y * np.sin(yaw)
+    ny = x * np.sin(yaw) + y * np.cos(yaw)
+    return nx, ny
+
+
+# 3d rotate
+def rot3d(pos, euler):
+    R = euler_to_rot(euler[0], euler[1], euler[2])
+    return R @ pos
+
+
+def list_to_str(vec):
+    return " ".join(str(s) for s in vec)
+
+import random
+import string
+
+def random_box_name():
+    suffix = ''.join(random.choices(string.ascii_letters + string.digits, k=5))
+    return f"box_{suffix}"
+
+class TerrainGenerator:
+
+    def __init__(self, width=None, step_height=None, num_stairs=None, length=None,render=False,max_bodies=None) -> None:
+        self.scene = xml_et.parse(INPUT_SCENE_PATH)
+        self.root = self.scene.getroot()
+        self.worldbody = self.root.find("worldbody")
+        self.asset = self.root.find("asset")
+        self.count_boxes=0
+        self.render=render
+        self.max_bodies=max_bodies
+        args = [width, step_height, num_stairs, length]
+        if args.count(None) != 1:
+            raise ValueError("Exactly three arguments must be provided.")
+        if num_stairs is None:
+            self.num_stairs = length / width
+            self.width, self.step_height, self.length = width, step_height, length
+        elif length is None:
+            self.length = num_stairs * width
+            self.width, self.step_height, self.num_stairs = width, step_height, num_stairs
+        self.block_height=self.num_stairs*self.step_height
+
+        self.box_data = []
+
+
+    # Add Box to scene
+    def AddBox(self,
+               position=[1.0, 0.0, 0.0],
+               euler=[0.0, 0.0, 0.0],
+               size=[2,2,2]):
+        if self.render:
+            if self.max_bodies is not None and self.count_boxes>=self.max_bodies-1:
+                return
+            box_body = xml_et.SubElement(self.worldbody, "body")
+            box_body.attrib["pos"] = list_to_str(position)
+            box_body.attrib["quat"] = list_to_str(euler_to_quat(euler[0], euler[1], euler[2]))
+            box_body.attrib["name"] = random_box_name()
+
+            geo = xml_et.SubElement(box_body, "geom")
+            geo.attrib["type"] = "box"
+            geo.attrib["size"] = list_to_str(0.5*np.array(size))
+            geo.attrib["contype"] = "2"
+            geo.attrib["conaffinity"] = "1"
+            self.count_boxes+=1
+
+        else:
+            quat = euler_to_quat(euler[0], euler[1], euler[2])
+            self.box_data.append({"pos": np.array(position), "size": 0.5* np.array(size),"quat":np.array(quat)})
+            self.count_boxes+=1
+
+
+
+    def AddGeometry(self,
+               position=[1.0, 0.0, 0.0],
+               euler=[0.0, 0.0, 0.0],
+               size=[0.1, 0.1],geo_type="box"):
+
+        geo = xml_et.SubElement(self.worldbody, "geom")
+        geo.attrib["pos"] = list_to_str(position)
+        geo.attrib["type"] = geo_type
+        geo.attrib["size"] = list_to_str(
+            0.5 * np.array(size))
+        quat = euler_to_quat(euler[0], euler[1], euler[2])
+        geo.attrib["quat"] = list_to_str(quat)
+
+    def AddStairs(self,
+                  init_pos=[0.0, 0.0, 0.0],
+                  yaw=0.0):
+        length=self.length
+        height=self.step_height
+        stair_nums=self.num_stairs
+        width=self.width
+
+        local_pos = [ -width/2,length/2, 0.]
+        for i in range(stair_nums):
+            local_pos[0] += width
+            local_pos[2] += height
+
+            x, y = rot2d(local_pos[0]-stair_nums*width/2, local_pos[1]-stair_nums*width/2, yaw)
+            self.AddBox([x + init_pos[0], y + init_pos[1], local_pos[2]/2+init_pos[2]],
+                        [0.0, 0.0, yaw], [width, length, local_pos[2]])
+
+    def AddFlat(self,init_pos=[0.0, 0.0, 0.0],
+                height=1.,
+                width =0.1,):
+        length=self.length
+        if height>0.:
+            self.AddBox([init_pos[0],init_pos[1], height/2],
+                        [0.0, 0.0,0.], [length,length,height])
+        else:
+            self.AddBox([init_pos[0],init_pos[1], height-width/2],
+                        [0.0, 0.0,0.], [length,length,width])
+
+    def AddTurningStairsUp(self, init_pos=[0.0, 0.0, 0.0],
+                        yaw=np.pi/2):
+        width=self.width
+        height=self.step_height
+        stair_nums=self.num_stairs
+        local_pos = [ -stair_nums*width/2-width/2,+stair_nums*width/2, 0.]
+        for i in range(stair_nums):
+            local_pos[0] += width
+            local_pos[1] -= width/2
+            local_pos[2] += height
+
+            x, y = rot2d(local_pos[0],local_pos[1], yaw)
+            self.AddBox([x + init_pos[0], y + init_pos[1], local_pos[2]/2+init_pos[2]],
+                        [0.0, 0.0, yaw], [width, width + width * i, local_pos[2]])
+        local_pos = [stair_nums*width/2-width/2,stair_nums*width/2, height]
+        for i in range(stair_nums-1):
+            local_pos[0] -= width
+            local_pos[1] -= width/2
+            local_pos[2] += height
+
+            x, y = rot2d(local_pos[0], local_pos[1] , yaw+np.pi/2)
+            self.AddBox([x + init_pos[0], y + init_pos[1], local_pos[2]/2+init_pos[2]],
+                        [0.0, 0.0, yaw+np.pi/2], [width, width + width * i,  local_pos[2]])
+
+
+
+    def AddTurningStairsDown(self, init_pos=[0.0, 0.0, 0.0],
+                        yaw=np.pi/2):
+        width=self.width
+        height=self.step_height
+        stair_nums=self.num_stairs
+        local_pos = [ -stair_nums*width/2-width/2,+stair_nums*width/2, stair_nums*height+height]
+        for i in range(stair_nums):
+            local_pos[0] += width
+            local_pos[1] -= width/2
+            local_pos[2] -= height
+
+            x, y = rot2d(local_pos[0],local_pos[1], yaw)
+            self.AddBox([x + init_pos[0], y + init_pos[1], local_pos[2]/2+init_pos[2]],
+                        [0.0, 0.0, yaw], [width, width + width * i, local_pos[2]])
+        local_pos = [stair_nums*width/2-width/2,stair_nums*width/2, (stair_nums-1)*height+height]
+        for i in range(stair_nums-1):
+            local_pos[0] -= width
+            local_pos[1] -= width/2
+            local_pos[2] -= height
+
+            x, y = rot2d(local_pos[0], local_pos[1] , yaw+np.pi/2)
+            self.AddBox([x + init_pos[0], y + init_pos[1], local_pos[2]/2+init_pos[2]],
+                        [0.0, 0.0, yaw+np.pi/2], [width, width + width * i,  local_pos[2]])
+
+
+
+    def AddRoughGround(self,
+                       init_pos=[1.0, 0.0, 0.0],
+                       euler=[0.0, -0.0, 0.0],
+                       nums=[10, 10],
+                       box_size=[0.5, 0.5, 0.5],
+                       box_euler=[0.0, 0.0, 0.0],
+                       separation=[0.2, 0.2],
+                       box_size_rand=[0.05, 0.05, 0.05],
+                       box_euler_rand=[0.2, 0.2, 0.2],
+                       separation_rand=[0.05, 0.05]):
+
+        local_pos = [0.0, 0.0, -0.5 * box_size[2]]
+        new_separation = np.array(separation) + np.array(
+            separation_rand) * np.random.uniform(-1.0, 1.0, 2)
+        for i in range(nums[0]):
+            local_pos[0] += new_separation[0]
+            local_pos[1] = 0.0
+            for j in range(nums[1]):
+                new_box_size = np.array(box_size) + np.array(
+                    box_size_rand) * np.random.uniform(-1.0, 1.0, 3)
+                new_box_euler = np.array(box_euler) + np.array(
+                    box_euler_rand) * np.random.uniform(-1.0, 1.0, 3)
+                new_separation = np.array(separation) + np.array(
+                    separation_rand) * np.random.uniform(-1.0, 1.0, 2)
+
+                local_pos[1] += new_separation[1]
+                pos = rot3d(local_pos, euler) + np.array(init_pos)
+                self.AddBox(pos, new_box_euler, new_box_size)
+
+    def Save(self,filename=None):
+        if filename is None:
+            self.scene.write(OUTPUT_SCENE_PATH)
+        else:
+            self.scene.write(filename)
+
+from wfc.wfc import WFCCore
+from getIndexes import *
+
+def generate_discrete(size):
+    left=(-1,0)
+    right=(1,0)
+    up=(0,1)
+    down=(0,-1)
+
+    directions=[left,down,right,up]
+    connections = {
+        0: {left: (0, 1),    down: (0,1),    right: (0,1),    up: (0,1)},
+        1: {left: (0,1), down: (0,1), right: (0,1), up: (0,1)}
+    }
+
+    wfc = WFCCore(2, connections, (size,size))
+    wfc.solve()
+    wave = wfc.wave.wave
+
+    return wave
+
+def generate_14(size, test=False):
+    left=(-1,0)
+    right=(1,0)
+    up=(0,1)
+    down=(0,-1)
+
+    directions=[left,down,right,up]
+    connections = {
+        0: {left: (0, 4,10,11),    down: (0,5,11,12),    right: (0, 2,12,13),    up: (0, 3,13,10)},
+        1: {left: (1, 2,6,7), down: (1, 3,7,8), right: (1, 4,8,9), up: (1,5,9,6)}
+    }
+
+    connections.update(Stairs(directions))
+    connections.update(StairsTurningUp(directions))
+    connections.update(StairsTurningDown(directions))
+
+    wfc = WFCCore(14, connections, (size,size))
+    outer=0
+    for x in range(size):
+        wfc.init((x, 0), outer)
+        wfc.init((x, size - 1), outer)
+
+    for y in range(1, size - 1):
+        wfc.init((0, y), outer)
+        wfc.init((size - 1, y), outer)
+    if test or np.random.random()>0.5:
+        wfc.init((size//2,size//2),0)
+    else:
+        wfc.init((size//2,size//2),1)
+    wfc.solve()
+    wave = wfc.wave.wave
+
+    return wave
+
+def addElement(map:TerrainGenerator,index,pos):
+    height=map.block_height
+    if index==0:
+        return
+        map.AddFlat(init_pos=[pos[0],pos[1],0.],height=0.)
+    elif index==1:
+        map.AddFlat(init_pos=[pos[0],pos[1],0.],height=height)
+    elif index==2:
+        map.AddStairs(init_pos=[pos[0],pos[1],0],yaw=0)
+    elif index==3:
+        map.AddStairs(init_pos=[pos[0],pos[1],0],yaw=np.pi/2)
+    elif index==4:
+        map.AddStairs(init_pos=[pos[0],pos[1],0],yaw=np.pi)
+    elif index==5:
+        map.AddStairs(init_pos=[pos[0],pos[1],0],yaw=-np.pi/2)
+    elif index==6:
+        map.AddTurningStairsUp(init_pos=[pos[0],pos[1],0.],yaw=0.)
+    elif index==7:
+        map.AddTurningStairsUp(init_pos=[pos[0],pos[1],0.],yaw=np.pi/2)
+    elif index==8:
+        map.AddTurningStairsUp(init_pos=[pos[0],pos[1],0.],yaw=np.pi)
+    elif index==9:
+        map.AddTurningStairsUp(init_pos=[pos[0],pos[1],0.],yaw=-np.pi/2)
+    elif index==10:
+        map.AddTurningStairsDown(init_pos=[pos[0],pos[1],0],yaw=0)
+    elif index==11:
+        map.AddTurningStairsDown(init_pos=[pos[0],pos[1],0],yaw=np.pi/2)
+    elif index==12:
+        map.AddTurningStairsDown(init_pos=[pos[0],pos[1],0],yaw=np.pi)
+    elif index==13:
+        map.AddTurningStairsDown(init_pos=[pos[0],pos[1],0],yaw=-np.pi/2)
+
+def create_centered_grid(N, d):
+    half_size = (N - 1) / 2
+    x = (np.arange(N) - half_size) * d
+    y = (np.arange(N) - half_size) * d
+    X, Y = np.meshgrid(x, y, indexing='ij')
+    grid = np.stack((X, Y), axis=-1)
+    return grid
