@@ -319,41 +319,35 @@ def plot_benchmark_charts():
         x = np.arange(len(sizes))
         w = 0.35
 
-        # --- bar chart ---
-        fig, ax = plt.subplots(figsize=(9, 5))
-        bars_b = ax.bar(x - w/2, b_means, w, yerr=b_stds, capsize=4,
-                        color=BEFORE_COLOR, label="Before", alpha=0.9)
-        bars_a = ax.bar(x + w/2, a_means, w, yerr=a_stds, capsize=4,
-                        color=AFTER_COLOR, label="After",  alpha=0.9)
-        ax.set_xticks(x); ax.set_xticklabels(sizes)
-        ax.set_xlabel(xlabel); ax.set_ylabel("실행 시간 (ms)")
-        ax.set_title(f"{title_prefix} — 실행 시간 비교 (n={7}회 평균 ± std)")
-        ax.legend()
-        # annotate speedup above each pair
-        for xi, sp in zip(x, speedups):
-            ax.annotate(f"{sp:.1f}×", xy=(xi, max(b_means[x.tolist().index(xi)],
-                                                    a_means[x.tolist().index(xi)]) * 1.05),
-                        ha="center", fontsize=9, color=SPEEDUP_COLOR, fontweight="bold")
+        fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(14, 5))
+        fig.suptitle(f"{title_prefix} — 실행 시간 비교 및 속도 향상 (n=7회 평균 ± std)", fontsize=13)
+
+        # left: bar chart
+        ax1.bar(x - w/2, b_means, w, yerr=b_stds, capsize=4,
+                color=BEFORE_COLOR, label="Before", alpha=0.9)
+        ax1.bar(x + w/2, a_means, w, yerr=a_stds, capsize=4,
+                color=AFTER_COLOR,  label="After",  alpha=0.9)
+        ax1.set_xticks(x); ax1.set_xticklabels(sizes)
+        ax1.set_xlabel(xlabel)
+        ax1.set_ylabel("실행 시간 (ms)")
+        ax1.set_title("실행 시간")
+        ax1.legend()
+
+        # right: speedup line
+        ax2.plot(sizes, speedups, marker="o", color=SPEEDUP_COLOR, linewidth=2, markersize=8)
+        ax2.axhline(1.0, color="grey", linestyle="--", linewidth=1, label="1× (no gain)")
+        ax2.fill_between(sizes, 1, speedups, alpha=0.15, color=SPEEDUP_COLOR)
+        for s, sp in zip(sizes, speedups):
+            ax2.annotate(f"{sp:.2f}×", (s, sp), textcoords="offset points",
+                         xytext=(0, 8), ha="center", fontsize=9)
+        ax2.set_xlabel(xlabel)
+        ax2.set_ylabel("속도 향상 배율 (Before / After)")
+        ax2.set_title("속도 향상 배율")
+        ax2.legend()
+
         fig.tight_layout()
         slug = exp_key.replace("_", "")
-        out = os.path.join(PLOTS_DIR, f"fig_bench_{slug}_bar.png")
-        fig.savefig(out, dpi=150, bbox_inches="tight")
-        plt.close(fig)
-        print(f"  saved {out}")
-
-        # --- speedup line ---
-        fig, ax = plt.subplots(figsize=(8, 4))
-        ax.plot(sizes, speedups, marker="o", color=SPEEDUP_COLOR, linewidth=2, markersize=8)
-        ax.axhline(1.0, color="grey", linestyle="--", linewidth=1, label="1× (no gain)")
-        ax.fill_between(sizes, 1, speedups, alpha=0.15, color=SPEEDUP_COLOR)
-        for s, sp in zip(sizes, speedups):
-            ax.annotate(f"{sp:.2f}×", (s, sp), textcoords="offset points",
-                        xytext=(0, 8), ha="center", fontsize=9)
-        ax.set_xlabel(xlabel); ax.set_ylabel("속도 향상 (before / after)")
-        ax.set_title(f"{title_prefix} — 속도 향상 배율")
-        ax.legend()
-        fig.tight_layout()
-        out = os.path.join(PLOTS_DIR, f"fig_bench_{slug}_speedup.png")
+        out = os.path.join(PLOTS_DIR, f"fig_bench_{slug}.png")
         fig.savefig(out, dpi=150, bbox_inches="tight")
         plt.close(fig)
         print(f"  saved {out}")
