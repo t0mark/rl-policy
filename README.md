@@ -15,8 +15,6 @@ pyramid-stairs curriculum) using a CENet that estimates terrain context from a
 models/
 ├── dwaq_go2_v12.pt        TorchScript policy (1.2 MB, CPU & CUDA)
 └── dwaq_go2_v12.json      I/O specification (term order, scales, joint order)
-examples/
-└── infer_example.py       minimal standalone usage
 requirements.txt           torch only
 ```
 
@@ -42,8 +40,6 @@ action = policy(obs_current, obs_history)             # (B, 12)
 
 joint_pd_target = default_joint_pos + 0.25 * action   # what to send to the PD layer
 ```
-
-A complete runnable demo with dummy inputs is in [`examples/infer_example.py`](examples/infer_example.py).
 
 ## Policy I/O
 
