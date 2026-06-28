@@ -1,0 +1,67 @@
+{
+  "policy_io": {
+    "inputs": {
+      "obs_current": {
+        "shape": [
+          45
+        ],
+        "term_order": [
+          {
+            "name": "base_ang_vel",
+            "dim": 3,
+            "scale": 0.2,
+            "note": "body angular velocity (IMU), gyro xyz"
+          },
+          {
+            "name": "projected_gravity",
+            "dim": 3,
+            "scale": 1.0,
+            "note": "gravity vector in body frame"
+          },
+          {
+            "name": "velocity_commands",
+            "dim": 3,
+            "scale": 1.0,
+            "note": "EXTERNAL command (vx, vy, vyaw)"
+          },
+          {
+            "name": "joint_pos_rel",
+            "dim": 12,
+            "scale": 1.0,
+            "note": "joint_pos - default_joint_pos"
+          },
+          {
+            "name": "joint_vel_rel",
+            "dim": 12,
+            "scale": 0.05,
+            "note": "joint angular velocity"
+          },
+          {
+            "name": "last_action",
+            "dim": 12,
+            "scale": 1.0,
+            "note": "previous policy output"
+          }
+        ]
+      },
+      "obs_history": {
+        "shape": [
+          225
+        ],
+        "history_length": 5,
+        "note": "flatten of the last 5 obs_current vectors (oldest -> newest, contiguous)."
+      }
+    },
+    "outputs": {
+      "action": {
+        "shape": [
+          12
+        ],
+        "applied_as": "joint_pd_target = default_joint_pos + 0.25 * action"
+      }
+    },
+    "joint_order_note": "Matches the Unitree Go2 URDF order used during training (unitree_ros2/robots/go2_description/urdf/go2_description.urdf). Re-map to your on-robot SDK joint indexing as needed."
+  },
+  "control_rate_hz": 50,
+  "trained_with": "DreamWaQ (CVAE estimator) on Isaac Lab 2.3 + rsl-rl-lib 3.0.1"
+}
